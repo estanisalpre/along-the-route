@@ -36,7 +36,6 @@ export function GarageMarketMap({ ownedCityIds, cash, onBuy }: GarageMarketMapPr
       zoom: 3.2,
     })
     map.on('load', () => {
-      map.setProjection({ type: 'globe' })
       setupCityLayer(map, {
         color: colorExpression(ownedCityIds),
         buildProperties: (c) => ({ id: c.id, name: c.name, owned: ownedCityIds.includes(c.id) }),

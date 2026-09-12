@@ -1,7 +1,7 @@
 import type { GeoJSONSource } from 'maplibre-gl'
 import { Map, Marker, NavigationControl } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { CITIES } from '../../core/cities'
 import { LOW_FUEL_LITERS } from '../../core/fuel'
 import { computeTripState, type Trip } from '../../core/trip'
@@ -10,6 +10,7 @@ import { setCityLayerVisible, setupCityLayer } from '../../map/cityLayer'
 import { setGasStationLayerVisible, setupGasStationLayer } from '../../map/gasStationLayer'
 import { getMapLayerVisibility, subscribeMapLayerVisibility } from '../../map/mapLayerVisibility'
 import { ThreeVehicleLayer } from '../../map/ThreeVehicleLayer'
+import { DAY_STYLE } from '../../map/timeOfDay'
 import { useMapStyleUrl } from '../../map/useMapStyleUrl'
 import { useTimeOfDayTint } from '../../map/useTimeOfDayTint'
 
@@ -30,13 +31,19 @@ const MAX_ZOOM = 15
 const VEHICLE_SIZE_AT_MIN_ZOOM_PX = 30
 const VEHICLE_SIZE_AT_MAX_ZOOM_PX = 20
 
-// Ciudades y gasolineras dejan de dibujarse directamente por debajo de estos
-// zooms — no solo el toggle manual del menú de opciones, esto es automático:
-// alejado del todo hay demasiados puntos amontonados y terminan ensuciando la
-// vista justo donde importa ver los vehículos. Los vehículos nunca tienen
-// este piso (ver VEHICLE_SIZE_AT_MIN_ZOOM_PX arriba, siempre visibles).
-const CITY_MIN_VISIBLE_ZOOM = 6
-const GAS_STATION_MIN_VISIBLE_ZOOM = 7
+// Ciudades y gasolineras nunca se dejan de dibujar a ningún zoom — a
+// diferencia de los vehículos (que crecen al acercarse, ver
+// VEHICLE_SIZE_AT_MIN_ZOOM_PX arriba), se van achicando en la dirección
+// contraria (ver `radius` más abajo) en vez de desaparecer. Que aparezcan o
+// desaparezcan de golpe al cruzar un umbral de zoom era justamente el bug
+// que este achicamiento gradual evita.
+const CITY_RADIUS_PX: unknown[] = ['interpolate', ['linear'], ['zoom'], MIN_ZOOM, 5, MAX_ZOOM, 2]
+
+/** Hasta este zoom (inclusive) se ve la capa de nubes (ver `CloudLayer` más abajo) — la
+ *  idea es "de arriba se ven las nubes, como mirando desde un avión/satélite"; al
+ *  acercarse más que esto se supone que las "atravesás" y quedan por encima, así que
+ *  se dejan de mostrar. Al revés de los vehículos (que se agrandan al acercarse). */
+const CLOUD_MAX_ZOOM = 6
 
 // Prueba de concepto: todos los vehículos usan este mismo modelo 3D mientras
 // se prueba cómo se ve/gira siguiendo rutas reales. Más adelante cada tipo de
@@ -87,6 +94,7 @@ export function DashboardMap({
   const vehicleLayersRef = useRef<Record<string, ThreeVehicleLayer>>({})
   const metaMarkersRef = useRef<Marker[]>([])
   const appliedStyleUrlRef = useRef<string | null>(null)
+  const [zoomedOutForClouds, setZoomedOutForClouds] = useState(true)
 
   // Refs "vivas" con el último valor de props, para que el loop de animación y
   // los listeners de click (que corren fuera del ciclo de render de React)
@@ -113,28 +121,46 @@ export function DashboardMap({
       container: containerRef.current,
       style: styleUrl,
       center: [-63.6, -38.4],
-      zoom: 1.6,
+      zoom: 4,
       minZoom: MIN_ZOOM,
       maxZoom: MAX_ZOOM,
     })
     appliedStyleUrlRef.current = styleUrl
-    map.on('load', () => {
-      map.setProjection({ type: 'globe' })
-      // Arranca mostrando la Tierra como planeta y "llega" hasta Argentina.
-      map.flyTo({ center: [-63.6, -38.4], zoom: 4, duration: 3000, essential: true })
-      // Una vez terminada esa intro, se pasa a mercator "de verdad" (no solo
-      // visualmente aplanado). Los vehículos 3D se ubican con matemática de
-      // mercator plano — con el globo todavía activo, a zoom alejado/medio la
-      // curvatura de la esfera no coincide con esa matemática y terminan mal
-      // ubicados (a veces bien lejos de donde deberían estar).
-      map.once('moveend', () => map.setProjection({ type: 'mercator' }))
-
-      setupCityLayer(map, { minzoom: CITY_MIN_VISIBLE_ZOOM })
-      setupGasStationLayer(map, (id) => onSelectGasStationRef.current(id), GAS_STATION_MIN_VISIBLE_ZOOM)
+    // Mapa plano (mercator) sin ninguna intro animada — directo a Argentina, y
+    // ciudades/gasolineras se agregan apenas termina de cargar el estilo, sin
+    // esperar nada más. Se probó una intro con proyección de esfera
+    // ("vertical-perspective") que "llegaba" desde el planeta, pero esa
+    // proyección es mucho más pesada de renderizar que mercator y en hardware
+    // más débil terminaba trabándose a mitad de la transición — no vale la
+    // pena el riesgo por un efecto cosmético.
+    //
+    // A propósito es `'style.load'` y NO `'load'`: `'load'` recién dispara
+    // cuando el mapa llega a un estado de reposo total (estilo Y todas las
+    // fuentes/tiles necesarias), y el layer 3D de cada vehículo llama a
+    // `map.moveLayer(...)` en CADA cuadro de animación (más abajo, para
+    // quedar siempre arriba de todo) — esa mutación continua del estilo hace
+    // que el mapa nunca llegue a ese reposo mientras haya al menos un
+    // vehículo, así que `'load'` no llegaba a dispararse nunca y ciudades/
+    // gasolineras se quedaban sin agendar hasta que algo más (un zoom)
+    // disparaba otro camino de setup. `'style.load'` en cambio solo depende
+    // del estilo en sí (ver el efecto de día/noche más abajo, que ya usaba
+    // este evento) y dispara una sola vez, sin importar la animación.
+    map.once('style.load', () => {
+      setupCityLayer(map, { radius: CITY_RADIUS_PX })
+      setupGasStationLayer(map, (id) => onSelectGasStationRef.current(id))
       applyLayerVisibility(map)
     })
     // Clickear el mapa vacío deselecciona el vehículo activo.
     map.on('click', () => onSelectVehicleRef.current(null))
+    // Capa de nubes (ver el overlay CSS al final del componente): solo se
+    // prende/apaga al cruzar el umbral de zoom, no en cada pixel de zoom —
+    // evita renderizar de más mientras se hace scroll/pinch para alejarse.
+    const updateZoomedOutForClouds = () => {
+      const below = map.getZoom() <= CLOUD_MAX_ZOOM
+      setZoomedOutForClouds((prev) => (prev === below ? prev : below))
+    }
+    map.on('zoom', updateZoomedOutForClouds)
+    updateZoomedOutForClouds()
     mapRef.current = map
     map.addControl(new NavigationControl(), 'top-right')
 
@@ -152,8 +178,8 @@ export function DashboardMap({
     appliedStyleUrlRef.current = styleUrl
     map.setStyle(styleUrl)
     map.once('style.load', () => {
-      setupCityLayer(map, { minzoom: CITY_MIN_VISIBLE_ZOOM })
-      setupGasStationLayer(map, (id) => onSelectGasStationRef.current(id), GAS_STATION_MIN_VISIBLE_ZOOM)
+      setupCityLayer(map, { radius: CITY_RADIUS_PX })
+      setupGasStationLayer(map, (id) => onSelectGasStationRef.current(id))
       applyLayerVisibility(map)
       // `setStyle` se lleva puestas las capas custom (los modelos 3D) — se
       // olvidan las instancias viejas y se recrean solas en el próximo cuadro
@@ -248,11 +274,80 @@ export function DashboardMap({
   }, [])
 
   const sunTint = useTimeOfDayTint()
+  // Nubes solo de día — de noche no se ven (o se verían como un manchón gris sin sentido,
+  // ver `CloudLayer` más abajo) y solo hasta cierto zoom (`zoomedOutForClouds`, seteado
+  // por el listener de arriba): la idea es "de arriba se ven, al acercarte las atravesás".
+  const showClouds = zoomedOutForClouds && styleUrl === DAY_STYLE
 
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
       <div className="pointer-events-none absolute inset-0" style={{ backgroundColor: sunTint }} />
+      <CloudLayer visible={showClouds} />
+    </div>
+  )
+}
+
+/** Un par de nubes grandes nada más — nada de patrón repetido tipo mosaico. Cada una
+ *  cruza la pantalla de punta a punta a su propio ritmo (ver `CLOUD_BLOBS`). */
+interface CloudBlobConfig {
+  /** Posición vertical, % de la altura del mapa. */
+  topPercent: number
+  widthPx: number
+  heightPx: number
+  /** Cuánto tarda en cruzar toda la pantalla — todas lentas, pero no todas iguales. */
+  durationS: number
+  /** Negativo: arranca ya a mitad de camino, para que no salgan las 3 juntas del borde. */
+  delayS: number
+  opacity: number
+}
+
+const CLOUD_BLOBS: CloudBlobConfig[] = [
+  { topPercent: 5, widthPx: 1200, heightPx: 400, durationS: 150, delayS: 0, opacity: 0.65 },
+  { topPercent: 78, widthPx: 1580, heightPx: 370, durationS: 210, delayS: -90, opacity: 0.65 },
+]
+
+/**
+ * Nubes de ambiente: no siguen al mapa (no están ancladas a coordenadas reales, se
+ * mueven en espacio de pantalla) — a propósito, para no tener que mantener una textura
+ * georreferenciada por un efecto puramente decorativo. Cada nube es un blob de gradiente
+ * radial (nada de imagen) que atraviesa la pantalla en línea recta con `translateX` — se
+ * arma con `left` en negativo y la animación llega hasta bien pasado el borde derecho, así
+ * siempre entra y sale por los bordes, nunca aparece de golpe en el medio.
+ *
+ * El grupo entero (no cada nube por separado) se anima con `opacity` vía CSS transition
+ * al prenderse/apagarse (`visible`, ver `showClouds` más arriba) — se mantiene siempre
+ * montado en el DOM (nunca se saca del árbol) para que la transición tenga algo de qué
+ * partir; si se desmontara de golpe con `visible && <CloudLayer />` no habría fade, solo
+ * aparecer/desaparecer de un cuadro al otro.
+ *
+ * Blanco traslúcido con mezcla NORMAL (sin `mix-blend-mode`): el estilo de día del mapa
+ * es bien clarito (verde pálido/crema), y `screen` con blanco sobre un fondo ya casi
+ * blanco no cambia casi nada — probado y confirmado invisible, por eso se descartó a
+ * favor de alpha compositing común, que sí se nota sea cual sea el color de debajo.
+ */
+function CloudLayer({ visible }: { visible: boolean }) {
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 overflow-hidden transition-opacity duration-1000 ease-in-out"
+      style={{ opacity: visible ? 1 : 0 }}
+    >
+      {CLOUD_BLOBS.map((blob, i) => (
+        <div
+          key={i}
+          className="animate-cloud-drift-x absolute"
+          style={{
+            top: `${blob.topPercent}%`,
+            left: -blob.widthPx,
+            width: blob.widthPx,
+            height: blob.heightPx,
+            background: `radial-gradient(ellipse at center, rgba(255,255,255,${blob.opacity}) 35%, transparent 75%)`,
+            filter: 'blur(10px)',
+            animationDuration: `${blob.durationS}s`,
+            animationDelay: `${blob.delayS}s`,
+          }}
+        />
+      ))}
     </div>
   )
 }

@@ -6,3 +6,21 @@ body,
   height: 100%;
   margin: 0;
 }
+
+/* Nubes de ambiente del mapa (ver `CloudLayer` en DashboardMap.tsx): cada nube cruza
+   la pantalla en línea recta de izquierda a derecha, entrando y saliendo por los
+   bordes (el `left` negativo del elemento ya la arranca fuera de pantalla) — el punto
+   de llegada (160vw) es a propósito bien pasado el borde derecho, para que termine de
+   salir del todo antes de reiniciar el loop. */
+@keyframes cloud-drift-x {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(160vw);
+  }
+}
+
+.animate-cloud-drift-x {
+  animation: cloud-drift-x linear infinite;
+}

@@ -26,11 +26,6 @@ interface CityLayerOptions {
   radius?: number | unknown[]
   popupText?: (properties: CityProperties) => string
   onClick?: (cityId: string) => void
-  /** Zoom mínimo al que se dibuja — por debajo de eso ni se intenta renderizar
-   *  (no solo queda "oculta", MapLibre directamente no la procesa), para no
-   *  ensuciar la vista ni competir con los vehículos cuando el mapa está muy
-   *  alejado. */
-  minzoom?: number
 }
 
 /**
@@ -54,7 +49,6 @@ export function setupCityLayer(map: Map, options: CityLayerOptions = {}) {
     id: CITY_LAYER_ID,
     type: 'circle',
     source: CITY_SOURCE_ID,
-    minzoom: options.minzoom ?? 0,
     paint: {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       'circle-radius': (options.radius ?? 4) as any,

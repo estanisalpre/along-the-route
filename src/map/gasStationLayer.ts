@@ -1,11 +1,16 @@
 import type { Map } from 'maplibre-gl'
-import { GAS_STATIONS, GAS_STATION_BRANDS } from '../core/gasStation'
+import { GAS_STATIONS } from '../core/gasStation'
 
 export const GAS_STATION_SOURCE_ID = 'gas-stations'
 export const GAS_STATION_LAYER_ID = 'gas-stations-circle'
 
+/** Todas las gasolineras se pintan igual, sin importar la marca — un solo punto
+ *  rojo reconocible de un vistazo, en vez de competir por colores con las
+ *  ciudades y los vehículos. */
+const GAS_STATION_COLOR = '#ef4444'
+
 /**
- * Capa de gasolineras: un círculo de color por marca. Se dibuja como capa
+ * Capa de gasolineras: un círculo rojo por estación. Se dibuja como capa
  * nativa 'circle' (no un ícono/símbolo) a propósito — MapLibre siempre
  * renderiza las capas de símbolos/texto por encima de todo lo demás (ver
  * DashboardMap.tsx, mismo motivo por el que las etiquetas de ciudad tapaban
@@ -13,8 +18,13 @@ export const GAS_STATION_LAYER_ID = 'gas-stations-circle'
  * siempre arriba de los vehículos sin importar el orden en que se agreguen.
  * Con un círculo sí se puede controlar el orden — se agrega ANTES que las
  * capas 3D de los vehículos y nunca se mueve por encima de ellas.
+ *
+ * Sin `minzoom`: nunca se dejan de dibujar, a ningún zoom — se van achicando
+ * (ver `circle-radius`) en vez de desaparecer, así no compiten con los
+ * vehículos cuando el mapa está muy alejado pero tampoco hay que lidiar con
+ * el punto apareciendo/desapareciendo de golpe al cruzar un umbral.
  */
-export function setupGasStationLayer(map: Map, onClick: (gasStationId: string) => void, minzoom = 0) {
+export function setupGasStationLayer(map: Map, onClick: (gasStationId: string) => void) {
   if (map.getSource(GAS_STATION_SOURCE_ID)) return
 
   map.addSource(GAS_STATION_SOURCE_ID, {
@@ -33,15 +43,10 @@ export function setupGasStationLayer(map: Map, onClick: (gasStationId: string) =
     id: GAS_STATION_LAYER_ID,
     type: 'circle',
     source: GAS_STATION_SOURCE_ID,
-    minzoom,
     paint: {
-      'circle-radius': 5,
-      'circle-color': [
-        'match',
-        ['get', 'brand'],
-        ...GAS_STATION_BRANDS.flatMap((b) => [b.id, b.color]),
-        '#999999',
-      ] as unknown as string,
+      // Más chico cuanto más acercado — al revés de los vehículos, que crecen con el zoom.
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 6, 15, 2.5] as unknown as number,
+      'circle-color': GAS_STATION_COLOR,
       'circle-stroke-width': 0.7,
       'circle-stroke-color': '#0a0a0a',
     },

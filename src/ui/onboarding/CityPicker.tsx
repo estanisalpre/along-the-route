@@ -39,7 +39,6 @@ export function CityPicker({ selectedCityId, onSelect }: CityPickerProps) {
       zoom: 1.6,
     })
     map.on('load', () => {
-      map.setProjection({ type: 'globe' })
       setupCityLayer(map, {
         color: '#f97316',
         radius: radiusExpression(selectedCityId),

@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ps -p 12391 -p 12392 -o pid,ppid,etime,cmd)",
+      "Bash(netstat -tlnp)",
+      "Bash(pkill -9 -f \"vite\")",
+      "Bash(node diag4.mjs)",
+      "Bash(grep -n \"mapRef.current = map$\" src/ui/dashboard/DashboardMap.tsx)",
+      "Bash(rm -f diag*.mjs diag*.png *)",
+      "Bash(node diagclouds.mjs)",
+      "Bash(curl -sf http://localhost:5183/ -o /dev/null -w \"HTTP:%{http_code}\\\\n\")",
+      "Bash(netstat -tln)",
+      "Bash(node diagclouds2.mjs)",
+      "Bash(rm -f diagclouds2.mjs diagclouds2-*.png *)",
+      "Bash(node diagclouds3.mjs)",
+      "Bash(node diagclouds4.mjs)",
+      "Bash(python3 -c ' *)",
+      "Bash(node diagclouds5.mjs)",
+      "Bash(rm -f diagclouds*.mjs diagclouds*.png *)"
+    ],
+    "additionalDirectories": [
+      "/home/esalinas/Projects/por-la-ruta"
+    ]
+  }
+}
