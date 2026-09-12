@@ -53,7 +53,16 @@ function normalizeCompany(parsed: Company & { garage?: Garage }): Company {
     // aproximación razonable ya que son viajes ya en curso, no nuevos.
     startingFuelLiters: trip.startingFuelLiters ?? 0,
     fuelConsumptionPer100Km: trip.fuelConsumptionPer100Km ?? 0,
-    fuelStops: trip.fuelStops ?? [],
+    // Paradas guardadas antes de que el desvío tuviera distancia/ruta real (o antes de
+    // que existiera el sistema de combustible): se las trata como si la gasolinera
+    // estuviera exactamente sobre la ruta (sin desvío) — evita un `detourOneWayKm`
+    // undefined que arrastraría NaN a todo el cálculo de combustible del viaje.
+    fuelStops: (trip.fuelStops ?? []).map((stop) => ({
+      ...stop,
+      detourOneWayKm: stop.detourOneWayKm ?? 0,
+    })),
+    startingDistanceKm: trip.startingDistanceKm ?? 0,
+    totalFuelCostPaid: trip.totalFuelCostPaid ?? 0,
   }))
   parsed.fuelPriceHistory = parsed.fuelPriceHistory ?? []
   return parsed

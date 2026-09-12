@@ -93,7 +93,7 @@ export function FleetPanel({
                 const isSelected = trip.vehicleId === selectedVehicleId
 
                 if (state.status === 'arrived') {
-                  const fuelCost = trip.fuelStops.reduce((sum, s) => sum + s.cost, 0)
+                  const fuelCost = trip.totalFuelCostPaid + trip.fuelStops.reduce((sum, s) => sum + s.cost, 0)
                   const settlement = settleTrip(trip.route.distanceTotalKm, trip.payout, fuelCost)
                   return (
                     <motion.div
@@ -157,8 +157,16 @@ export function FleetPanel({
                       </div>
                       <CenterButton onClick={() => onCenterVehicle(trip.vehicleId)} />
                     </div>
-                    {state.status === 'refueling' ? (
-                      <div className="mt-1 text-xs text-blue-400">⛽ Repostando ({((state.refuelProgress ?? 0) * 100).toFixed(0)}%)</div>
+                    {state.status === 'stranded' ? (
+                      <div className="mt-1 text-xs font-medium text-red-400">🚨 Varado sin combustible</div>
+                    ) : state.status === 'refueling' ? (
+                      <div className="mt-1 text-xs text-blue-400">
+                        {state.refuelPhase === 'waiting_for_route' && '🔎 Buscando ruta a la gasolinera...'}
+                        {state.refuelPhase === 'to_station' && '🚚 Yendo a la gasolinera...'}
+                        {state.refuelPhase === 'pumping' &&
+                          `⛽ Repostando (+${(state.litersAddedSoFar ?? 0).toFixed(1)} / ${state.activeFuelStop?.litersAdded.toFixed(1)} L)`}
+                        {state.refuelPhase === 'returning' && '🚚 Volviendo a la ruta...'}
+                      </div>
                     ) : (
                       <>
                         <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-neutral-700">
@@ -174,7 +182,13 @@ export function FleetPanel({
                         </div>
                       </>
                     )}
-                    {lowFuel && <div className="mt-1 text-xs font-medium text-red-400">⚠️ Combustible bajo</div>}
+                    {lowFuel && state.status !== 'stranded' && (
+                      <div className="mt-1 text-xs font-medium text-red-400">
+                        {state.status === 'in_transit' && trip.fuelStops.length === 0
+                          ? '⚠️ No hay gasolinera cerca'
+                          : '⚠️ Combustible bajo'}
+                      </div>
+                    )}
                   </motion.div>
                 )
               })}

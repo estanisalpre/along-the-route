@@ -12,7 +12,6 @@ import { FuelMarketSection } from '../market/FuelMarketSection'
 interface MercadoViewProps {
   cargoOffers: Cargo[]
   vehicles: Vehicle[]
-  loading: boolean
   now: number
   onAccept: (cargo: Cargo) => void
   garages: Garage[]
@@ -25,7 +24,6 @@ interface MercadoViewProps {
 export function MercadoView({
   cargoOffers,
   vehicles,
-  loading,
   now,
   onAccept,
   garages,
@@ -40,15 +38,11 @@ export function MercadoView({
     <div className="min-h-0 flex-1 overflow-y-auto p-6">
       <h2 className="mb-1 text-xl font-semibold text-white">Mercado de cargas</h2>
       <p className="mb-6 text-sm text-neutral-400">
-        Cargas disponibles en todo el país — aceptar una necesita un vehículo libre con chofer en la ciudad de origen.
-        {expiresAt && expiresAt > now && (
-          <> Este lote se renueva en {formatDuration(expiresAt - now)}.</>
-        )}
+        Una carga por cada ciudad del país — aceptar una necesita un vehículo libre con chofer en la ciudad de origen.
+        {expiresAt && expiresAt > now && <> Este lote se renueva en {formatDuration(expiresAt - now)}.</>}
       </p>
 
-      {loading && cargoOffers.length === 0 && <p className="text-sm text-neutral-500">Buscando cargas disponibles...</p>}
-
-      {!loading && cargoOffers.length === 0 && (
+      {cargoOffers.length === 0 && (
         <p className="text-sm text-neutral-500">No hay cargas disponibles ahora mismo — probá de nuevo en un rato.</p>
       )}
 

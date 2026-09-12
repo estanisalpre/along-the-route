@@ -20,6 +20,9 @@ interface MapaViewProps {
   onCollectTrip: (trip: Trip) => void
   onSetCruiseSpeed: (vehicleId: string, cruiseSpeedKmh: number) => void
   onSetRefuelTarget: (vehicleId: string, refuelTargetLiters: number) => void
+  onAdjustFuel: (vehicleId: string, deltaLiters: number) => void
+  onCancelFuelStop: (vehicleId: string) => void
+  onCallTowTruck: (vehicleId: string) => void
 }
 
 export function MapaView({
@@ -31,6 +34,9 @@ export function MapaView({
   onCollectTrip,
   onSetCruiseSpeed,
   onSetRefuelTarget,
+  onAdjustFuel,
+  onCancelFuelStop,
+  onCallTowTruck,
 }: MapaViewProps) {
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null)
   const [focusRequest, setFocusRequest] = useState<FocusVehicleRequest | null>(null)
@@ -85,6 +91,9 @@ export function MapaView({
                   onClose={() => setSelectedVehicleId(null)}
                   onSetCruiseSpeed={(kmh) => onSetCruiseSpeed(selectedVehicle.id, kmh)}
                   onSetRefuelTarget={(liters) => onSetRefuelTarget(selectedVehicle.id, liters)}
+                  onAdjustFuel={(delta) => onAdjustFuel(selectedVehicle.id, delta)}
+                  onCancelFuelStop={() => onCancelFuelStop(selectedVehicle.id)}
+                  onCallTowTruck={() => onCallTowTruck(selectedVehicle.id)}
                 />
               </div>
             )}

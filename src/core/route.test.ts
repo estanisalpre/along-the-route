@@ -41,16 +41,25 @@ describe('positionAtDistance', () => {
     expect(bearing).toBeCloseTo(0, 0) // primer segmento: derecho al norte
   })
 
-  it('mezcla suavemente el bearing hacia el próximo segmento a mitad de camino', () => {
-    // Con geometrías reales (miles de puntos, segmentos cortos) esta mezcla es
-    // imperceptible; acá el segmento es artificialmente largo (~111km) para el test,
-    // así que a mitad de camino ya se nota el promedio entre norte (0°) y este (90°).
+  it('a mitad de un segmento largo mantiene el rumbo propio, sin anticipar el giro de la próxima esquina', () => {
+    // Un segmento artificialmente largo (~111km) simula el desvío hacia una
+    // gasolinera lejana: a mitad de camino todavía tiene que apuntar al norte
+    // (rumbo de ESTE segmento), no ya estar girando hacia el este (el próximo).
     const halfFirstSegment = route.cumulativeDistanceKm[1] / 2
     const { position, bearing } = positionAtDistance(route, halfFirstSegment)
     expect(position[0]).toBeCloseTo(0, 3)
     expect(position[1]).toBeGreaterThan(0)
     expect(position[1]).toBeLessThan(1)
-    expect(bearing).toBeCloseTo(45, 0)
+    expect(bearing).toBeCloseTo(0, 0)
+  })
+
+  it('recién gira hacia el rumbo del próximo segmento en el último tramito antes de la esquina', () => {
+    const segmentEndKm = route.cumulativeDistanceKm[1]
+    const justBeforeCorner = positionAtDistance(route, segmentEndKm - 0.0001)
+    expect(justBeforeCorner.bearing).toBeCloseTo(90, 0) // ya casi llegando, gira hacia el este
+
+    const wellBeforeCorner = positionAtDistance(route, segmentEndKm - 5)
+    expect(wellBeforeCorner.bearing).toBeCloseTo(0, 0) // 5km antes, todavía derecho al norte
   })
 
   it('clampea distancias fuera de rango', () => {

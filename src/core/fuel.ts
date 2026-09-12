@@ -1,22 +1,36 @@
 /** Debajo de este nivel el vehículo se muestra en rojo — se está por quedar sin combustible. */
 export const LOW_FUEL_LITERS = 10
 
-/** Toda parada a repostar tarda siempre lo mismo, sin importar cuánto se cargue. */
+/** Toda parada a repostar tarda siempre lo mismo cargando, sin importar cuánto se cargue
+ *  (el desvío de ida/vuelta hasta la gasolinera es tiempo APARTE — ver `core/trip.ts`). */
 export const REFUEL_STOP_DURATION_MS = 5 * 60 * 1000
+
+/** Costo fijo de llamar a la grúa de asistencia cuando el vehículo se queda varado sin
+ *  combustible (`status: 'stranded'`, ver `core/trip.ts`) — se descuenta de la caja de la
+ *  empresa una sola vez, sin importar el vehículo; a cambio llena el tanque al toque, sin
+ *  espera (ver docs/FUEL_MECHANICS.md). */
+export const TOW_TRUCK_COST = 300_000
+
+/** Ir a la velocidad mínima permitida (`MIN_CRUISE_SPEED_KMH`, ver core/vehicle.ts) en vez
+ *  de a la de fábrica ahorra como máximo esta fracción del consumo — un 20-25% real de
+ *  ahorro por ir más lento, no una caída libre. Ver `effectiveConsumptionPer100Km`. */
+const MAX_SPEED_SAVINGS_FRACTION = 0.3
 
 /**
  * Consumo real (L/100km) circulando a `cruiseSpeedKmh`. `baseConsumptionPer100Km`
  * es el consumo del vehículo a su velocidad de fábrica (`ratedSpeedKmh`, su
  * `averageSpeedKmh`) — el valor con el que se lo compró. Ir más lento consume
- * menos: se aproxima con una caída cuadrática de la velocidad (la energía
- * para vencer la resistencia del aire por km recorrido escala más o menos
- * con el cuadrado de la velocidad). No es un simulador físico real — solo
- * necesitamos que "más lento = más eficiente" sea cierto y reaccione al
- * slider de velocidad de forma creíble.
+ * menos, pero con un techo: como mucho `MAX_SPEED_SAVINGS_FRACTION` de ahorro,
+ * aunque se vaya al piso del slider (`MIN_CRUISE_SPEED_KMH`). Una caída
+ * puramente cuadrática con la velocidad (como haría un modelo de resistencia
+ * del aire de manual) suena razonable en la fórmula pero dispara la autonomía
+ * a 3-4x con solo bajar la velocidad — un camión con tanque lleno pasaba de
+ * ~550km a ~1900km de rango solo por ir a 40km/h en vez de a su velocidad de
+ * fábrica, algo que ningún vehículo real logra. En la práctica ir más lento
+ * ahorra combustible por motor/aerodinámica, pero no en esa magnitud.
  *
  * A velocidad de fábrica el resultado es exactamente `baseConsumptionPer100Km`;
- * a la mitad de la velocidad, un cuarto del consumo (el doble de autonomía
- * con los mismos litros ya sería mucho — así se nota bien la decisión).
+ * al piso del slider, como mucho un `MAX_SPEED_SAVINGS_FRACTION` menos.
  */
 export function effectiveConsumptionPer100Km(
   baseConsumptionPer100Km: number,
@@ -24,7 +38,8 @@ export function effectiveConsumptionPer100Km(
   ratedSpeedKmh: number,
 ): number {
   const ratio = cruiseSpeedKmh / ratedSpeedKmh
-  return baseConsumptionPer100Km * ratio * ratio
+  const savingsFactor = 1 - MAX_SPEED_SAVINGS_FRACTION * (1 - ratio * ratio)
+  return baseConsumptionPer100Km * savingsFactor
 }
 
 /** Autonomía (km) disponible con `fuelLiters` al consumo efectivo dado. */

@@ -19,11 +19,12 @@ interface OsrmResponse {
 }
 
 /**
- * Pide a OSRM la ruta real entre dos ciudades y devuelve un `RouteData` ya
- * preprocesado (distancia acumulada + bearing por punto).
+ * Pide a OSRM la ruta real entre dos puntos [lon, lat] cualquiera — no hace
+ * falta que sean ciudades del dataset, sirve igual para el desvío hacia una
+ * gasolinera (ver `fetchRoute` abajo y `routeCache.ts` `getCachedDetourRoute`).
  */
-export async function fetchRoute(origin: City, destination: City): Promise<RouteData> {
-  const url = `${OSRM_BASE_URL}/${origin.lon},${origin.lat};${destination.lon},${destination.lat}?overview=full&geometries=geojson`
+export async function fetchRouteBetweenPoints(origin: LonLat, destination: LonLat, originId: string, destinationId: string): Promise<RouteData> {
+  const url = `${OSRM_BASE_URL}/${origin[0]},${origin[1]};${destination[0]},${destination[1]}?overview=full&geometries=geojson`
   const response = await fetch(url)
 
   if (!response.ok) {
@@ -41,5 +42,13 @@ export async function fetchRoute(origin: City, destination: City): Promise<Route
     throw new Error('OSRM no devolvió una geometría válida')
   }
 
-  return buildRouteData(origin.id, destination.id, geometry)
+  return buildRouteData(originId, destinationId, geometry)
+}
+
+/**
+ * Pide a OSRM la ruta real entre dos ciudades y devuelve un `RouteData` ya
+ * preprocesado (distancia acumulada + bearing por punto).
+ */
+export async function fetchRoute(origin: City, destination: City): Promise<RouteData> {
+  return fetchRouteBetweenPoints([origin.lon, origin.lat], [destination.lon, destination.lat], origin.id, destination.id)
 }

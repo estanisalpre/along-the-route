@@ -1,3 +1,4 @@
+import type { GeoJSONSource } from 'maplibre-gl'
 import { Map, Marker, NavigationControl } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useLayoutEffect, useRef } from 'react'
@@ -13,6 +14,7 @@ import { useMapStyleUrl } from '../../map/useMapStyleUrl'
 import { useTimeOfDayTint } from '../../map/useTimeOfDayTint'
 
 const ROUTE_SOURCE_ID = 'selected-route'
+const DETOUR_SOURCE_ID = 'fuel-detour-line'
 
 // Límites de zoom del mapa: MIN_ZOOM es lo más "lejos" que se puede alejar
 // (valores bajos = ver más mundo), MAX_ZOOM es lo más cerca que se puede
@@ -225,16 +227,18 @@ export function DashboardMap({
     function frame() {
       const map = mapRef.current
       if (map?.isStyleLoaded()) {
+        const now = Date.now()
         updateVehicleMarkers(
           map,
           vehicleMarkersRef.current,
           vehicleLayersRef.current,
           vehiclesRef.current,
           tripsRef.current,
-          Date.now(),
+          now,
           selectedVehicleIdRef.current,
           onSelectVehicleRef,
         )
+        applyFuelDetourLine(map, tripsRef.current, selectedVehicleIdRef.current, now)
       }
       rafId = requestAnimationFrame(frame)
     }
@@ -287,6 +291,56 @@ function applySelectedRoute(map: Map, metaMarkersRef: { current: Marker[] }, tri
   const start = trip.route.geometry[0]
   const end = trip.route.geometry[trip.route.geometry.length - 1]
   metaMarkersRef.current = [createFlagMarker('🟢', start).addTo(map), createFlagMarker('🏁', end).addTo(map)]
+}
+
+/**
+ * Línea verde de "desvío" hacia la gasolinera: se muestra desde el momento en
+ * que hay una parada agendada pendiente (`state.upcomingFuelStop` — apenas se
+ * planifica, no hace falta esperar a que llegue, sea hacia adelante o, si la
+ * gasolinera alcanzable más cercana quedó atrás, hacia atrás — ver
+ * `planFuelStops`) y sigue mostrándose mientras ya está parado repostando ahí
+ * (`state.activeFuelStop`). Va desde la posición actual del vehículo — no un
+ * punto fijo — hasta la gasolinera, así se achica solo a medida que se
+ * acerca. Se llama en cada cuadro del loop de animación — no en el mismo
+ * efecto que dibuja la línea azul — porque necesita saber el `status` de
+ * AHORA, no solo si cambió el viaje/vehículo seleccionado.
+ */
+function applyFuelDetourLine(map: Map, trips: Trip[], selectedVehicleId: string | null, now: number) {
+  const trip = trips.find((t) => t.vehicleId === selectedVehicleId)
+  const state = trip ? computeTripState(trip, now) : undefined
+  const stop = state?.activeFuelStop ?? state?.upcomingFuelStop
+
+  if (!stop || !state) {
+    if (map.getLayer(DETOUR_SOURCE_ID)) map.setLayoutProperty(DETOUR_SOURCE_ID, 'visibility', 'none')
+    return
+  }
+
+  const stationPoint: [number, number] = [stop.stationLon, stop.stationLat]
+  // Si el servicio de ruteo (OSRM) ya resolvió el camino real hasta la gasolinera, se dibuja
+  // ese (por calles) — mientras el pedido sigue en vuelo, una línea recta como aproximación
+  // transitoria desde la posición actual (se autocorrige sola frame a frame).
+  const coordinates = stop.detourRouteGeometry ?? [state.position, stationPoint]
+  const feature = {
+    type: 'Feature' as const,
+    properties: {},
+    geometry: { type: 'LineString' as const, coordinates },
+  }
+
+  const source = map.getSource(DETOUR_SOURCE_ID) as GeoJSONSource | undefined
+  if (source) {
+    source.setData(feature)
+    map.setLayoutProperty(DETOUR_SOURCE_ID, 'visibility', 'visible')
+    return
+  }
+
+  map.addSource(DETOUR_SOURCE_ID, { type: 'geojson', data: feature })
+  map.addLayer({
+    id: DETOUR_SOURCE_ID,
+    type: 'line',
+    source: DETOUR_SOURCE_ID,
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: { 'line-color': '#22c55e', 'line-width': 3, 'line-dasharray': [2, 1.5] },
+  })
 }
 
 function createFlagMarker(emoji: string, lngLat: [number, number]): Marker {

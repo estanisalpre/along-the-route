@@ -39,28 +39,37 @@ describe('cargoMarketExpiresAt', () => {
 describe('pickCargoMarketPairs', () => {
   const cities = makeCities(50)
 
+  it('devuelve exactamente una oferta por cada ciudad — ninguna se queda sin nada', () => {
+    const pairs = pickCargoMarketPairs(123, cities)
+    expect(pairs).toHaveLength(cities.length)
+    expect(new Set(pairs.map((p) => p.origin.id)).size).toBe(cities.length)
+  })
+
   it('es determinista: mismo ciclo + mismas ciudades siempre da los mismos pares', () => {
     const a = pickCargoMarketPairs(123, cities)
     const b = pickCargoMarketPairs(123, cities)
-    expect(a.map(([o, d]) => `${o.id}-${d.id}`)).toEqual(b.map(([o, d]) => `${o.id}-${d.id}`))
+    expect(a.map((p) => `${p.origin.id}-${p.destination.id}`)).toEqual(b.map((p) => `${p.origin.id}-${p.destination.id}`))
   })
 
   it('ciclos distintos dan lotes distintos', () => {
     const a = pickCargoMarketPairs(1, cities)
     const b = pickCargoMarketPairs(2, cities)
-    expect(a.map(([o, d]) => `${o.id}-${d.id}`)).not.toEqual(b.map(([o, d]) => `${o.id}-${d.id}`))
+    expect(a.map((p) => `${p.origin.id}-${p.destination.id}`)).not.toEqual(
+      b.map((p) => `${p.origin.id}-${p.destination.id}`),
+    )
   })
 
   it('nunca elige la misma ciudad como origen y destino', () => {
     const pairs = pickCargoMarketPairs(42, cities)
-    for (const [origin, destination] of pairs) {
-      expect(origin.id).not.toBe(destination.id)
+    for (const pair of pairs) {
+      expect(pair.origin.id).not.toBe(pair.destination.id)
     }
   })
 
-  it('no repite el mismo par dentro del mismo lote', () => {
+  it('estima la distancia en línea recta (mayor a 0, sin llamar a ninguna red)', () => {
     const pairs = pickCargoMarketPairs(7, cities)
-    const keys = pairs.map(([o, d]) => `${o.id}-${d.id}`)
-    expect(new Set(keys).size).toBe(keys.length)
+    for (const pair of pairs) {
+      expect(pair.estimatedDistanceKm).toBeGreaterThan(0)
+    }
   })
 })

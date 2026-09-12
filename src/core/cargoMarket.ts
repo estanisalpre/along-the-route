@@ -1,12 +1,15 @@
 import type { City } from './cities'
+import { haversineDistanceKm } from './geo'
 import { seededRandom } from './seededRandom'
 
 /**
  * El mercado de cargas ya no depende de la flota del jugador (antes solo se
  * generaban ofertas en las ciudades donde había un vehículo libre con chofer
  * — apenas ese vehículo salía de viaje, la lista quedaba vacía). Ahora es un
- * lote fijo de ofertas que se renueva completo cada `CARGO_MARKET_CYCLE_MS`
- * (6 horas reales), calculado a partir del reloj — no del estado de nadie.
+ * lote fijo que se renueva completo cada `CARGO_MARKET_CYCLE_MS` (6 horas
+ * reales), calculado a partir del reloj — no del estado de nadie — y con
+ * **una oferta por cada ciudad del país** como origen: ninguna ciudad se
+ * queda sin nada para ofrecer, aunque le toque una carga mala.
  *
  * Esto es a propósito el mismo cálculo que haría un backend real más
  * adelante: `cargoMarketCycleIndex(now)` da el mismo número para cualquiera
@@ -15,16 +18,20 @@ import { seededRandom } from './seededRandom'
  * empresa (a diferencia del precio del combustible, que si ancla a
  * `company.createdAt`). El día que esto se sirva desde una base de datos, el
  * server puede usar exactamente esta misma cuenta para saber qué lote le
- * toca sin duplicar lógica — y las funciones de acá (`pickCargoMarketPairs`,
- * `cargoMarketExpiresAt`) se pueden mover tal cual a ese backend.
+ * toca sin duplicar lógica.
  */
 export const CARGO_MARKET_CYCLE_MS = 6 * 60 * 60 * 1000
 
-/** Cuántas ofertas trae cada lote — "mucha capacidad", para que nadie se quede sin nada
- *  para elegir. Con un backend real esto podría ser mucho más grande sin costo extra para
- *  el cliente (el cálculo pesado ya estaría hecho); acá cada una implica pedir una ruta
- *  real, así que se mantiene en un número razonable para no saturar el servidor de ruteo. */
-export const CARGO_OFFERS_PER_CYCLE = 24
+/**
+ * La distancia de la oferta (para fijar el pago al generarla) se estima en
+ * línea recta, no con una ruta real — pedirle a OSRM una ruta por cada una
+ * de las ~500 ciudades de un país sería carísimo solo para armar el lote. La
+ * ruta real (más larga, sigue caminos) se pide recién al aceptar (ver
+ * `acceptCargo` en Dashboard.tsx) — este factor achica la diferencia entre
+ * la distancia estimada y la real, que en caminos reales casi siempre es
+ * mayor a la línea recta.
+ */
+const ROAD_DISTANCE_FACTOR = 1.3
 
 export function cargoMarketCycleIndex(now: number): number {
   return Math.floor(now / CARGO_MARKET_CYCLE_MS)
@@ -34,32 +41,31 @@ export function cargoMarketExpiresAt(cycleIndex: number): number {
   return (cycleIndex + 1) * CARGO_MARKET_CYCLE_MS
 }
 
+export interface CargoMarketPair {
+  origin: City
+  destination: City
+  /** Estimada en línea recta × un factor de camino — ver ROAD_DISTANCE_FACTOR. */
+  estimatedDistanceKm: number
+  /** Seed para pasarle a `buildCargoOffer` — determinista, único por par dentro del ciclo. */
+  seed: number
+}
+
 /**
- * Elige qué pares origen-destino le tocan a este ciclo. Determinista: el
- * mismo `cycleIndex` siempre elige los mismos pares (para la misma lista de
- * ciudades) — no usa `Math.random()`. Evita repetir el mismo par dos veces
- * dentro del mismo lote.
+ * Un par origen-destino por cada ciudad del país (la ciudad es siempre el
+ * origen) — determinista: el mismo `cycleIndex` siempre elige los mismos
+ * destinos, para cualquiera. No usa `Math.random()` ni pide rutas reales,
+ * así que cubre TODAS las ciudades sin llamar a la red ni una vez.
  */
-export function pickCargoMarketPairs(cycleIndex: number, cities: City[]): [City, City][] {
+export function pickCargoMarketPairs(cycleIndex: number, cities: City[]): CargoMarketPair[] {
   if (cities.length < 2) return []
 
-  const pairs: [City, City][] = []
-  const seen = new Set<string>()
-  let attempt = 0
-  const maxAttempts = CARGO_OFFERS_PER_CYCLE * 5
-
-  while (pairs.length < CARGO_OFFERS_PER_CYCLE && attempt < maxAttempts) {
-    const seed = cycleIndex * 977 + attempt * 2
-    const originIdx = Math.floor(seededRandom(seed) * cities.length)
-    const destIdx = Math.floor(seededRandom(seed + 1) * cities.length)
-    attempt++
-    if (originIdx === destIdx) continue
-
-    const key = `${originIdx}-${destIdx}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    pairs.push([cities[originIdx], cities[destIdx]])
-  }
-
-  return pairs
+  return cities.map((origin, i) => {
+    const seed = cycleIndex * 977 + i * 2
+    let destIdx = Math.floor(seededRandom(seed) * cities.length)
+    if (destIdx === i) destIdx = (destIdx + 1) % cities.length
+    const destination = cities[destIdx]
+    const estimatedDistanceKm =
+      haversineDistanceKm([origin.lon, origin.lat], [destination.lon, destination.lat]) * ROAD_DISTANCE_FACTOR
+    return { origin, destination, estimatedDistanceKm, seed }
+  })
 }

@@ -16,7 +16,6 @@ export interface GasStation {
   brand: GasStationBrand
   lat: number
   lon: number
-  /** Ciudad de referencia — para mostrar "cerca de X" y para la generación. */
   nearCityId: string
 }
 

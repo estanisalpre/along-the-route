@@ -3,7 +3,7 @@ import { CITIES } from '../../core/cities'
 import type { Driver } from '../../core/driver'
 import { driverAvatarGradient, driverInitials } from '../../core/driverAvatar'
 import { formatArs, formatClockTime, formatDuration } from '../../core/format'
-import { autonomyKm, effectiveConsumptionPer100Km, LOW_FUEL_LITERS } from '../../core/fuel'
+import { autonomyKm, effectiveConsumptionPer100Km, LOW_FUEL_LITERS, TOW_TRUCK_COST } from '../../core/fuel'
 import { computeTripState, type Trip } from '../../core/trip'
 import { MIN_CRUISE_SPEED_KMH, type Vehicle } from '../../core/vehicle'
 
@@ -15,7 +15,12 @@ interface VehicleDetailPanelProps {
   onClose: () => void
   onSetCruiseSpeed: (cruiseSpeedKmh: number) => void
   onSetRefuelTarget: (refuelTargetLiters: number) => void
+  onAdjustFuel: (deltaLiters: number) => void
+  onCancelFuelStop: () => void
+  onCallTowTruck: () => void
 }
+
+const DEBUG_FUEL_STEP_LITERS = 1
 
 export function VehicleDetailPanel({
   vehicle,
@@ -25,6 +30,9 @@ export function VehicleDetailPanel({
   onClose,
   onSetCruiseSpeed,
   onSetRefuelTarget,
+  onAdjustFuel,
+  onCancelFuelStop,
+  onCallTowTruck,
 }: VehicleDetailPanelProps) {
   const state = trip ? computeTripState(trip, now) : null
   const origin = trip ? CITIES.find((c) => c.id === trip.route.originCityId) : undefined
@@ -42,13 +50,27 @@ export function VehicleDetailPanel({
 
   const cruiseSpeedKmh = vehicle.cruiseSpeedKmh ?? vehicle.averageSpeedKmh
   const refuelTargetLiters = vehicle.refuelTargetLiters ?? tankCapacityLiters
-  const canEditSettings = !trip // el viaje en curso ya salió con su plan fijo — ver core/fuelPlan.ts
+  // Se puede tocar en cualquier momento, viaje en curso o no — replanifica el viaje
+  // activo en vivo (ver core/fuelPlan.ts `replanTripFuel`). Solo se bloquea mientras
+  // está parado repostando: cambiarlo ahí mismo no tendría efecto hasta que termine
+  // esa parada, así que se lo deja claro en vez de dejar que el cambio se pierda.
+  const canEditSettings = state?.status !== 'refueling' && state?.status !== 'stranded'
+  // A diferencia de los sliders, el debug ▲/▼ SÍ puede usarse varado (para probar sin
+  // pagar la grúa) — solo se bloquea durante una parada real, donde reiniciaría el
+  // ciclo ida→carga→vuelta en el mismo lugar en vez de dejarlo terminar (ver
+  // `adjustTripFuel` en core/fuelPlan.ts).
+  const fuelDebugDisabled = state?.status === 'refueling'
   const consumptionAtCruiseSpeed =
     vehicle.fuelConsumptionPer100Km !== undefined
       ? effectiveConsumptionPer100Km(vehicle.fuelConsumptionPer100Km, cruiseSpeedKmh, vehicle.averageSpeedKmh)
       : undefined
   const autonomyAtCruiseSpeedKm =
     consumptionAtCruiseSpeed !== undefined ? autonomyKm(tankCapacityLiters, consumptionAtCruiseSpeed) : undefined
+  // A diferencia de la de arriba (tanque lleno, hipotética), esta usa el combustible
+  // REAL que tiene ahora mismo — baja a medida que lo va gastando, igual que el
+  // número de litros. Es la que responde "¿hasta dónde llego ya mismo?".
+  const autonomyAtCurrentFuelKm =
+    consumptionAtCruiseSpeed !== undefined ? autonomyKm(currentFuelLiters, consumptionAtCruiseSpeed) : undefined
 
   return (
     <motion.div
@@ -99,15 +121,58 @@ export function VehicleDetailPanel({
           {state.status === 'refueling' && (
             <div className="rounded border border-blue-500/40 bg-blue-500/10 p-2">
               <div className="flex justify-between text-blue-300">
-                <span>⛽ Repostando...</span>
-                <span>{((state.refuelProgress ?? 0) * 100).toFixed(0)}%</span>
+                <span>
+                  {state.refuelPhase === 'waiting_for_route' && '🔎 Buscando ruta a la gasolinera...'}
+                  {state.refuelPhase === 'to_station' && '🚚 Yendo a la gasolinera...'}
+                  {state.refuelPhase === 'pumping' && '⛽ Repostando...'}
+                  {state.refuelPhase === 'returning' && '🚚 Volviendo a la ruta...'}
+                </span>
+                {state.refuelPhase === 'pumping' && (
+                  <span>
+                    +{(state.litersAddedSoFar ?? 0).toFixed(1)} / {state.activeFuelStop?.litersAdded.toFixed(1)} L
+                  </span>
+                )}
               </div>
-              <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-neutral-800">
-                <div
-                  className="h-full bg-blue-400 transition-[width]"
-                  style={{ width: `${(state.refuelProgress ?? 0) * 100}%` }}
-                />
-              </div>
+              {state.refuelPhase === 'pumping' && (
+                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-neutral-800">
+                  <div
+                    className="h-full bg-blue-400 transition-[width]"
+                    style={{ width: `${(state.refuelProgress ?? 0) * 100}%` }}
+                  />
+                </div>
+              )}
+              {(state.refuelPhase === 'waiting_for_route' || state.refuelPhase === 'to_station') && (
+                <button
+                  type="button"
+                  onClick={onCancelFuelStop}
+                  className="mt-2 w-full rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 hover:text-white"
+                >
+                  ✕ Cancelar parada y seguir viaje
+                </button>
+              )}
+              {state.refuelPhase === 'pumping' && (
+                <div className="mt-2 text-center text-neutral-500">Ya empezó a cargar — hay que esperar a que termine.</div>
+              )}
+            </div>
+          )}
+
+          {state.status === 'in_transit' && lowFuel && trip.fuelStops.length === 0 && (
+            <div className="rounded border border-red-500/40 bg-red-500/10 p-2 text-center text-red-400">
+              ⚠️ No hay gasolinera cerca — puede quedarse sin combustible
+            </div>
+          )}
+
+          {state.status === 'stranded' && (
+            <div className="rounded border border-red-500/40 bg-red-500/10 p-2">
+              <div className="font-medium text-red-400">🚨 Varado sin combustible</div>
+              <div className="mt-1 text-neutral-400">No hay ninguna gasolinera alcanzable — hace falta asistencia.</div>
+              <button
+                type="button"
+                onClick={onCallTowTruck}
+                className="mt-2 w-full rounded bg-red-500/20 px-2 py-1 text-red-300 hover:bg-red-500/30 hover:text-white"
+              >
+                🚚 Llamar a la grúa ({formatArs(TOW_TRUCK_COST)})
+              </button>
             </div>
           )}
 
@@ -120,11 +185,17 @@ export function VehicleDetailPanel({
             </div>
             <div>
               <div className="text-neutral-500">Tiempo restante</div>
-              <div className="text-white">{state.status === 'arrived' ? 'Llegó' : formatDuration((state.remainingKm / trip.averageSpeedKmh) * 3_600_000)}</div>
+              <div className="text-white">
+                {state.status === 'arrived'
+                  ? 'Llegó'
+                  : state.status === 'stranded'
+                    ? 'Varado'
+                    : formatDuration((state.remainingKm / trip.averageSpeedKmh) * 3_600_000)}
+              </div>
             </div>
           </div>
 
-          {state.status !== 'refueling' && (
+          {state.status !== 'refueling' && state.status !== 'stranded' && (
             <div className={`rounded px-2 py-1 text-center font-medium ${lateMs > 0 ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
               {lateMs > 0 ? `Atrasado ${formatDuration(lateMs)}` : 'En horario'}
             </div>
@@ -146,8 +217,32 @@ export function VehicleDetailPanel({
       <div className="mt-3 grid grid-cols-2 gap-2 border-t border-neutral-800 pt-3 text-xs">
         <div>
           <div className="text-neutral-500">Combustible</div>
-          <div className={lowFuel ? 'font-semibold text-red-400' : 'text-white'}>
-            {tankCapacityLiters ? `${currentFuelLiters.toFixed(0)} / ${tankCapacityLiters} L` : 'N/D'}
+          <div className="flex items-center gap-1.5">
+            <span className={lowFuel ? 'font-semibold text-red-400' : 'text-white'}>
+              {tankCapacityLiters ? `${currentFuelLiters.toFixed(0)} / ${tankCapacityLiters} L` : 'N/D'}
+            </span>
+            {tankCapacityLiters > 0 && (
+              <div className="flex flex-col leading-none">
+                <button
+                  type="button"
+                  title={fuelDebugDisabled ? 'Esperá a que termine la parada para cambiarlo' : `+${DEBUG_FUEL_STEP_LITERS}L (debug)`}
+                  disabled={fuelDebugDisabled}
+                  onClick={() => onAdjustFuel(DEBUG_FUEL_STEP_LITERS)}
+                  className="rounded-t bg-neutral-800 px-1 text-[10px] text-neutral-300 hover:bg-neutral-700 hover:text-white disabled:opacity-30 disabled:hover:bg-neutral-800"
+                >
+                  ▲
+                </button>
+                <button
+                  type="button"
+                  title={fuelDebugDisabled ? 'Esperá a que termine la parada para cambiarlo' : `-${DEBUG_FUEL_STEP_LITERS}L (debug)`}
+                  disabled={fuelDebugDisabled}
+                  onClick={() => onAdjustFuel(-DEBUG_FUEL_STEP_LITERS)}
+                  className="rounded-b bg-neutral-800 px-1 text-[10px] text-neutral-300 hover:bg-neutral-700 hover:text-white disabled:opacity-30 disabled:hover:bg-neutral-800"
+                >
+                  ▼
+                </button>
+              </div>
+            )}
           </div>
         </div>
         <div>
@@ -180,12 +275,17 @@ export function VehicleDetailPanel({
               onChange={(e) => onSetCruiseSpeed(Number(e.target.value))}
               className="w-full accent-orange-500 disabled:opacity-40"
             />
-            {autonomyAtCruiseSpeedKm !== undefined && (
+            {autonomyAtCurrentFuelKm !== undefined && (
               <div className="mt-1 text-neutral-500">
-                Autonomía a tanque lleno: ~{autonomyAtCruiseSpeedKm.toFixed(0)} km
+                Autonomía con el combustible actual: ~{autonomyAtCurrentFuelKm.toFixed(0)} km
               </div>
             )}
-            {!canEditSettings && <div className="mt-1 text-neutral-600">Se aplica recién en el próximo viaje.</div>}
+            {autonomyAtCruiseSpeedKm !== undefined && (
+              <div className="text-neutral-600">Autonomía a tanque lleno: ~{autonomyAtCruiseSpeedKm.toFixed(0)} km</div>
+            )}
+            {!canEditSettings && (
+              <div className="mt-1 text-neutral-600">Esperá a que termine de repostar para cambiarlo.</div>
+            )}
           </div>
 
           <div>

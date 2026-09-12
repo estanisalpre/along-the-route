@@ -55,6 +55,13 @@ export interface RoutePosition {
   bearing: number
 }
 
+// Cuán cerca (en km) de la esquina siguiente arranca a girar el vehículo hacia el rumbo
+// del próximo tramo — no antes. En polylines reales (la ruta azul, con puntos cada
+// pocos metros) esta ventana casi siempre termina siendo el segmento entero, así que
+// no cambia nada; en tramos largos y con pocos puntos (el desvío verde hacia una
+// gasolinera) es lo que evita que el vehículo "anticipe" el giro mucho antes de llegar.
+const TURN_SMOOTHING_KM = 0.05
+
 /** Busca la posición interpolada y el bearing a una distancia recorrida dada (en km). */
 export function positionAtDistance(route: RouteData, distanceKm: number): RoutePosition {
   const clamped = Math.min(Math.max(distanceKm, 0), route.distanceTotalKm)
@@ -70,13 +77,24 @@ export function positionAtDistance(route: RouteData, distanceKm: number): RouteP
 
   const segmentStart = route.cumulativeDistanceKm[lo]
   const segmentEnd = route.cumulativeDistanceKm[hi]
-  const t = segmentEnd > segmentStart ? (clamped - segmentStart) / (segmentEnd - segmentStart) : 0
+  const segmentLengthKm = segmentEnd - segmentStart
+  const t = segmentLengthKm > 0 ? (clamped - segmentStart) / segmentLengthKm : 0
 
   const [lon1, lat1] = route.geometry[lo]
   const [lon2, lat2] = route.geometry[hi]
 
+  // El giro hacia el rumbo del PRÓXIMO tramo se reparte solo en el último tramito antes
+  // de la esquina (o el segmento entero, si ya es más corto que eso) — el resto del
+  // segmento mantiene el rumbo propio, sin ir "adelantando" el giro de lejos.
+  const smoothingWindowKm = Math.min(TURN_SMOOTHING_KM, segmentLengthKm)
+  const distanceIntoSegmentKm = clamped - segmentStart
+  const turnT =
+    smoothingWindowKm > 0
+      ? Math.max(0, Math.min(1, (distanceIntoSegmentKm - (segmentLengthKm - smoothingWindowKm)) / smoothingWindowKm))
+      : 1
+
   return {
     position: [lerp(lon1, lon2, t), lerp(lat1, lat2, t)],
-    bearing: lerpAngleDegrees(route.bearingAt[lo], route.bearingAt[hi] ?? route.bearingAt[lo], t),
+    bearing: lerpAngleDegrees(route.bearingAt[lo], route.bearingAt[hi] ?? route.bearingAt[lo], turnT),
   }
 }
